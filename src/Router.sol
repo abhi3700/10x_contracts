@@ -59,7 +59,10 @@ contract Router {
             } else if (request.kind == PoolKind.InfinityCL) {
                 responses[i] = _readInfinityCl(request);
             } else {
-                revert UnsupportedPoolKind(request.kind);
+                responses[i].kind = request.kind;
+                responses[i].pool = request.pool;
+                responses[i].poolId = request.poolId;
+                responses[i].errorData = abi.encodeWithSelector(UnsupportedPoolKind.selector, request.kind);
             }
 
             unchecked {
@@ -73,15 +76,22 @@ contract Router {
         response.pool = request.pool;
         response.poolId = request.poolId;
 
-        try IV2Pool(request.pool)
-            .getReserves() returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast) {
-            response.success = true;
-            response.reserve0 = reserve0;
-            response.reserve1 = reserve1;
-            response.blockTimestampLast = blockTimestampLast;
-        } catch (bytes memory errorData) {
-            response.errorData = errorData;
+        (bool success, bytes memory data) = request.pool.staticcall(abi.encodeCall(IV2Pool.getReserves, ()));
+        if (!success) {
+            response.errorData = data;
+            return response;
         }
+
+        if (data.length != 96) {
+            response.errorData = data;
+            return response;
+        }
+
+        (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast) = abi.decode(data, (uint112, uint112, uint32));
+        response.success = true;
+        response.reserve0 = reserve0;
+        response.reserve1 = reserve1;
+        response.blockTimestampLast = blockTimestampLast;
     }
 
     function _readV3(PriceRequest calldata request) internal view returns (PriceResponse memory response) {
@@ -89,23 +99,40 @@ contract Router {
         response.pool = request.pool;
         response.poolId = request.poolId;
 
-        bool slot0Success;
-
-        try IV3Pool(request.pool)
-            .slot0() returns (uint160 sqrtPriceX96, int24 tick, uint16, uint16, uint16, uint8, bool) {
-            response.sqrtPriceX96 = sqrtPriceX96;
-            response.tick = tick;
-            slot0Success = true;
-        } catch (bytes memory errorData) {
-            response.errorData = errorData;
+        (bool slot0Success, bytes memory slot0Data) = request.pool.staticcall(abi.encodeCall(IV3Pool.slot0, ()));
+        if (!slot0Success) {
+            response.errorData = slot0Data;
+            return response;
         }
 
-        try IV3Pool(request.pool).liquidity() returns (uint128 liquidity) {
-            response.success = slot0Success;
-            response.liquidity = liquidity;
-        } catch (bytes memory errorData) {
-            response.errorData = errorData;
+        if (slot0Data.length != 224) {
+            response.errorData = slot0Data;
+            return response;
         }
+
+        (uint160 sqrtPriceX96, int24 tick,,,,,) =
+            abi.decode(slot0Data, (uint160, int24, uint16, uint16, uint16, uint32, bool));
+
+        response.sqrtPriceX96 = sqrtPriceX96;
+        response.tick = tick;
+
+        (bool liquiditySuccess, bytes memory liquidityData) =
+            request.pool.staticcall(abi.encodeCall(IV3Pool.liquidity, ()));
+        if (!liquiditySuccess) {
+            response.errorData = liquidityData;
+            return response;
+        }
+
+        if (liquidityData.length != 32) {
+            response.errorData = liquidityData;
+            return response;
+        }
+
+        uint128 liquidity = abi.decode(liquidityData, (uint128));
+        response.success = true;
+        response.sqrtPriceX96 = sqrtPriceX96;
+        response.tick = tick;
+        response.liquidity = liquidity;
     }
 
     function _readInfinityCl(PriceRequest calldata request) internal view returns (PriceResponse memory response) {
@@ -113,25 +140,45 @@ contract Router {
         response.pool = INFINITY_CL_POOL_MANAGER;
         response.poolId = request.poolId;
 
-        bool slot0Success;
-
-        try IInfinityClPoolManager(INFINITY_CL_POOL_MANAGER)
-            .getSlot0(request.poolId) returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee) {
-            response.sqrtPriceX96 = sqrtPriceX96;
-            response.tick = tick;
-            response.protocolFee = protocolFee;
-            response.lpFee = lpFee;
-            slot0Success = true;
-        } catch (bytes memory errorData) {
-            response.errorData = errorData;
+        (bool slot0Success, bytes memory slot0Data) =
+            INFINITY_CL_POOL_MANAGER.staticcall(abi.encodeCall(IInfinityClPoolManager.getSlot0, (request.poolId)));
+        if (!slot0Success) {
+            response.errorData = slot0Data;
+            return response;
         }
 
-        try IInfinityClPoolManager(INFINITY_CL_POOL_MANAGER).getLiquidity(request.poolId) returns (uint128 liquidity) {
-            response.success = slot0Success;
-            response.liquidity = liquidity;
-        } catch (bytes memory errorData) {
-            response.errorData = errorData;
+        if (slot0Data.length != 128) {
+            response.errorData = slot0Data;
+            return response;
         }
+
+        (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee) =
+            abi.decode(slot0Data, (uint160, int24, uint24, uint24));
+
+        response.sqrtPriceX96 = sqrtPriceX96;
+        response.tick = tick;
+        response.protocolFee = protocolFee;
+        response.lpFee = lpFee;
+
+        (bool liquiditySuccess, bytes memory liquidityData) =
+            INFINITY_CL_POOL_MANAGER.staticcall(abi.encodeCall(IInfinityClPoolManager.getLiquidity, (request.poolId)));
+        if (!liquiditySuccess) {
+            response.errorData = liquidityData;
+            return response;
+        }
+
+        if (liquidityData.length != 32) {
+            response.errorData = liquidityData;
+            return response;
+        }
+
+        uint128 liquidity = abi.decode(liquidityData, (uint128));
+        response.success = true;
+        response.sqrtPriceX96 = sqrtPriceX96;
+        response.tick = tick;
+        response.protocolFee = protocolFee;
+        response.lpFee = lpFee;
+        response.liquidity = liquidity;
     }
 }
 
@@ -149,7 +196,7 @@ interface IV3Pool {
             uint16 observationIndex,
             uint16 observationCardinality,
             uint16 observationCardinalityNext,
-            uint8 feeProtocol,
+            uint32 feeProtocol,
             bool unlocked
         );
 
