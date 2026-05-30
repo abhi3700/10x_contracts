@@ -49,7 +49,7 @@ contract Router {
     function readPrices(PriceRequest[] calldata requests) external view returns (PriceResponse[] memory responses) {
         responses = new PriceResponse[](requests.length);
 
-        for (uint256 i = 0; i < requests.length; i++) {
+        for (uint256 i; i < requests.length;) {
             PriceRequest calldata request = requests[i];
 
             if (request.kind == PoolKind.V2) {
@@ -58,6 +58,12 @@ contract Router {
                 responses[i] = _readV3(request);
             } else if (request.kind == PoolKind.InfinityCL) {
                 responses[i] = _readInfinityCl(request);
+            } else {
+                revert UnsupportedPoolKind(request.kind);
+            }
+
+            unchecked {
+                ++i;
             }
         }
     }
@@ -83,17 +89,19 @@ contract Router {
         response.pool = request.pool;
         response.poolId = request.poolId;
 
+        bool slot0Success;
+
         try IV3Pool(request.pool)
             .slot0() returns (uint160 sqrtPriceX96, int24 tick, uint16, uint16, uint16, uint8, bool) {
             response.sqrtPriceX96 = sqrtPriceX96;
             response.tick = tick;
+            slot0Success = true;
         } catch (bytes memory errorData) {
             response.errorData = errorData;
-            return response;
         }
 
         try IV3Pool(request.pool).liquidity() returns (uint128 liquidity) {
-            response.success = true;
+            response.success = slot0Success;
             response.liquidity = liquidity;
         } catch (bytes memory errorData) {
             response.errorData = errorData;
@@ -105,19 +113,21 @@ contract Router {
         response.pool = INFINITY_CL_POOL_MANAGER;
         response.poolId = request.poolId;
 
+        bool slot0Success;
+
         try IInfinityClPoolManager(INFINITY_CL_POOL_MANAGER)
             .getSlot0(request.poolId) returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee) {
             response.sqrtPriceX96 = sqrtPriceX96;
             response.tick = tick;
             response.protocolFee = protocolFee;
             response.lpFee = lpFee;
+            slot0Success = true;
         } catch (bytes memory errorData) {
             response.errorData = errorData;
-            return response;
         }
 
         try IInfinityClPoolManager(INFINITY_CL_POOL_MANAGER).getLiquidity(request.poolId) returns (uint128 liquidity) {
-            response.success = true;
+            response.success = slot0Success;
             response.liquidity = liquidity;
         } catch (bytes memory errorData) {
             response.errorData = errorData;

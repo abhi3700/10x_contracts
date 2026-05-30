@@ -110,6 +110,57 @@ contract RouterTest is Test {
         assertEq(responses[2].liquidity, 30 ether);
     }
 
+    function test_readPrices_reads_multiple_pools_of_same_kind() public {
+        MockV3Pool v3Pool2 = new MockV3Pool();
+
+        v3Pool.setSlot0(79228162514264337593543950336, -10, 20 ether);
+        v3Pool2.setSlot0(158456325028528675187087900672, 25, 40 ether);
+
+        Router.PriceRequest[] memory requests = new Router.PriceRequest[](2);
+
+        requests[0] = Router.PriceRequest({kind: Router.PoolKind.V3, pool: address(v3Pool), poolId: bytes32(0)});
+
+        requests[1] = Router.PriceRequest({kind: Router.PoolKind.V3, pool: address(v3Pool2), poolId: bytes32(0)});
+
+        Router.PriceResponse[] memory responses = router.readPrices(requests);
+
+        assertEq(responses.length, 2);
+
+        assertTrue(responses[0].success);
+        assertEq(responses[0].pool, address(v3Pool));
+        assertEq(responses[0].tick, -10);
+        assertEq(responses[0].liquidity, 20 ether);
+
+        assertTrue(responses[1].success);
+        assertEq(responses[1].pool, address(v3Pool2));
+        assertEq(responses[1].tick, 25);
+        assertEq(responses[1].liquidity, 40 ether);
+    }
+
+    function test_readPrices_continues_when_one_pool_fails() public {
+        MockV3Pool v3Pool2 = new MockV3Pool();
+
+        v3Pool.setShouldRevertSlot0(true);
+        v3Pool2.setSlot0(79228162514264337593543950336, 5, 50 ether);
+
+        Router.PriceRequest[] memory requests = new Router.PriceRequest[](2);
+
+        requests[0] = Router.PriceRequest({kind: Router.PoolKind.V3, pool: address(v3Pool), poolId: bytes32(0)});
+
+        requests[1] = Router.PriceRequest({kind: Router.PoolKind.V3, pool: address(v3Pool2), poolId: bytes32(0)});
+
+        Router.PriceResponse[] memory responses = router.readPrices(requests);
+
+        assertEq(responses.length, 2);
+
+        assertFalse(responses[0].success);
+        assertGt(responses[0].errorData.length, 0);
+
+        assertTrue(responses[1].success);
+        assertEq(responses[1].tick, 5);
+        assertEq(responses[1].liquidity, 50 ether);
+    }
+
     function test_readPrices_marks_item_failed_when_v2_pool_reverts() public {
         v2Pool.setShouldRevert(true);
 
