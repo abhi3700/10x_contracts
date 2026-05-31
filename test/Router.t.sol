@@ -110,6 +110,56 @@ contract RouterTest is Test {
         assertEq(responses[2].liquidity, 30 ether);
     }
 
+    /// E.g. fetch price of BILL token with onchain data from multiple pools:
+    /// - BILL/USDT in PancakeSwap v2
+    /// - BILL/WBNB in PancakeSwap v3
+    /// - BILL/USDT in PancakeSwap v4
+    function test_readPrices_reads_multiple_candidate_pools_for_same_token() public {
+        MockV2Pool billWbnbV2Pool = new MockV2Pool();
+        MockV3Pool billWbnbV3Pool = new MockV3Pool();
+        MockV3Pool billUsdtV3Pool = new MockV3Pool();
+        bytes32 billInfinityPoolId = keccak256("BILL/WBNB/INFINITY_CL");
+
+        billWbnbV2Pool.setReserves(1_000_000 ether, 50 ether, 222);
+        billWbnbV3Pool.setSlot0(79228162514264337593543950336, 0, 75_000 ether);
+        billUsdtV3Pool.setSlot0(79228162514264337593543950336, 0, 125_000 ether);
+        infinityClPoolManager.setPool(billInfinityPoolId, 79228162514264337593543950336, 0, 67, 67, 95_000 ether);
+
+        Router.PriceRequest[] memory requests = new Router.PriceRequest[](4);
+        requests[0] = Router.PriceRequest({kind: Router.PoolKind.V2, pool: address(billWbnbV2Pool), poolId: bytes32(0)});
+        requests[1] = Router.PriceRequest({kind: Router.PoolKind.V3, pool: address(billWbnbV3Pool), poolId: bytes32(0)});
+        requests[2] = Router.PriceRequest({kind: Router.PoolKind.V3, pool: address(billUsdtV3Pool), poolId: bytes32(0)});
+        requests[3] =
+            Router.PriceRequest({kind: Router.PoolKind.InfinityCL, pool: address(0), poolId: billInfinityPoolId});
+
+        Router.PriceResponse[] memory responses = router.readPrices(requests);
+
+        assertEq(responses.length, 4);
+
+        assertTrue(responses[0].success);
+        assertEq(uint8(responses[0].kind), uint8(Router.PoolKind.V2));
+        assertEq(responses[0].pool, address(billWbnbV2Pool));
+        assertEq(responses[0].reserve0, 1_000_000 ether);
+        assertEq(responses[0].reserve1, 50 ether);
+        assertEq(responses[0].blockTimestampLast, 222);
+
+        assertTrue(responses[1].success);
+        assertEq(uint8(responses[1].kind), uint8(Router.PoolKind.V3));
+        assertEq(responses[1].pool, address(billWbnbV3Pool));
+        assertEq(responses[1].liquidity, 75_000 ether);
+
+        assertTrue(responses[2].success);
+        assertEq(uint8(responses[2].kind), uint8(Router.PoolKind.V3));
+        assertEq(responses[2].pool, address(billUsdtV3Pool));
+        assertEq(responses[2].liquidity, 125_000 ether);
+
+        assertTrue(responses[3].success);
+        assertEq(uint8(responses[3].kind), uint8(Router.PoolKind.InfinityCL));
+        assertEq(responses[3].pool, address(infinityClPoolManager));
+        assertEq(responses[3].poolId, billInfinityPoolId);
+        assertEq(responses[3].liquidity, 95_000 ether);
+    }
+
     function test_readPrices_reads_multiple_pools_of_same_kind() public {
         MockV3Pool v3Pool2 = new MockV3Pool();
 
